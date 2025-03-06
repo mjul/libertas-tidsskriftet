@@ -1,11 +1,12 @@
 import argparse
+import io
 import logging
 import os
 from pathlib import Path
+from typing import TypedDict, List
 
 import requests
 from google import genai
-from typing import TypedDict, List
 
 
 class IssueSource(TypedDict):
@@ -128,6 +129,11 @@ def issue_pdf_path(issues_dir: Path, source: IssueSource) -> Path:
     return issue_dir(issues_dir, source) / "tidsskrift.pdf"
 
 
+def issue_summary_path(issues_dir: Path, source: IssueSource) -> Path:
+    """Get the path to the summary of the issue (contents, citations, etc.)"""
+    return issue_dir(issues_dir, source) / "resume.md"
+
+
 def download_file(url: str, dest_path: Path):
     """Download a file from a URL to the destination path using requests."""
     response = requests.get(url)
@@ -136,7 +142,7 @@ def download_file(url: str, dest_path: Path):
         f.write(response.content)
 
 
-def download_pdfs(issues_dir: Path, sources: List[IssueSource], force):
+def download_pdfs(issues_dir: Path, sources: List[IssueSource], force: bool):
     for source in sources:
         dir_path = issue_dir(issues_dir, source)
         pdf_path = issue_pdf_path(issues_dir, source)
@@ -147,6 +153,66 @@ def download_pdfs(issues_dir: Path, sources: List[IssueSource], force):
             logging.info(f"Downloading issue {source['issue']} from {source['uri']}...")
             download_file(source["uri"], issue_pdf_path(issues_dir, source))
             logging.info(f"Downloaded issue {source['issue']} from {source['uri']}.")
+
+
+def extract_issue_data(issues_dir: Path, source: IssueSource, google_api_key: str, force: bool):
+    pdf_path = issue_pdf_path(issues_dir, source)
+    if not pdf_path.exists():
+        logging.warn(f"Issue {source['issue']} not downloaded. Skipping.")
+    else:
+        client = genai.Client(api_key=google_api_key)
+
+        logging.info(f"Uploading PDF for analysis {pdf_path}...")
+        uploaded_pdf = client.files.upload(file=io.BytesIO(pdf_path.read_bytes()),
+                                           config=dict(mime_type="application/pdf"))
+
+        logging.info(f"Extracting contents...")
+        indhold_response = client.models.generate_content(
+            model="gemini-2.0-flash-exp",
+            contents=[
+                uploaded_pdf,
+                """
+                Giv mig indholdsfortegnelse og skribenter og kort resume af emnet for artiklerne i vedhæftede blad.
+                
+                Svar med Markdown i følgende format:
+
+                * **Titel på artikel** - *forfatter*. Kort resume af emnet.
+
+                
+                Hvis der er boganmeldelser, så skriv en sektion 
+                
+                ### Boganmeldelser
+                 
+                Skriv for hver anmeldelse bogens title og bogens forfatter og emne for anmeldelsen.
+                
+                Svar med Markdown i følgende format:
+
+                * **Bogtitel** - *bogens forfatter*. Bogens emne.
+                """
+            ]
+        )
+
+        logging.info(f"Article cited authors...")
+        citerede_response = client.models.generate_content(
+            model="gemini-2.0-flash-exp",
+            contents=[
+                uploaded_pdf,
+                """
+                Hvilke forfattere og værker er citeret eller omtalt i de forskellige artikler?
+                
+                Svar med Markdown i følgende format:
+                ### Titel på artikel
+                * Navn - liste over værker
+                """
+            ]
+        )
+
+        output_path = issue_summary_path(issues_dir, source)
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(f"# {source['issue']}\n\n")
+            f.write(f"PDF udgave: <{source['uri']}>\n\n")
+            f.write(f"## Indhold\n\n{indhold_response.text}\n\n")
+            f.write(f"## Citerede forfattere\n\n{citerede_response.text}\n\n")
 
 
 def main():
@@ -183,6 +249,8 @@ def main():
     issues_dir.mkdir(parents=True, exist_ok=True)
 
     download_pdfs(issues_dir, SOURCES, args.force)
+
+    extract_issue_data(issues_dir, SOURCES[-2], args.google_api_key, args.force)
 
 
 if __name__ == "__main__":
