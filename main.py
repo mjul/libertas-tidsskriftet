@@ -227,13 +227,19 @@ def main():
         "--google-api-key",
         type=str,
         default=os.environ.get("GOOGLE_API_KEY"),
-        help=("Google API key to use. "
+        help=("Google Gemini API key to use. "
               "If not specified, the key is read from the GOOGLE_API_KEY environment variable.")
     )
     parser.add_argument(
         "-f", "--force",
         action="store_true",
         help="Force re-download of files even if they exist"
+    )
+    parser.add_argument(
+        "--take",
+        type=int,
+        default=None,
+        help="Only process the first N issues from the source list."
     )
     args = parser.parse_args()
 
@@ -248,9 +254,12 @@ def main():
     issues_dir = data_dir / "issues"
     issues_dir.mkdir(parents=True, exist_ok=True)
 
-    download_pdfs(issues_dir, SOURCES, args.force)
+    sorted_sources = sorted(SOURCES, key=lambda source: source["issue"])
+    sources_to_process = sorted_sources[:args.take] if args.take else sorted_sources
+    download_pdfs(issues_dir, sources_to_process, args.force)
 
-    extract_issue_data(issues_dir, SOURCES[-2], args.google_api_key, args.force)
+    for source in sources_to_process:
+        extract_issue_data(issues_dir, source, args.google_api_key, args.force)
 
 
 if __name__ == "__main__":
