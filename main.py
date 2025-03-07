@@ -183,7 +183,7 @@ def extract_issue_data(issues_dir: Path, source: IssueSource, google_api_key: st
                 
                 ### Boganmeldelser
                  
-                Skriv for hver anmeldelse bogens title og bogens forfatter og emne for anmeldelsen.
+                Skriv for hver anmeldelse bogens titel og bogens forfatter og emne for anmeldelsen.
                 
                 Svar med Markdown i følgende format:
 
