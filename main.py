@@ -243,6 +243,9 @@ def main():
     )
     args = parser.parse_args()
 
+    if not args.google_api_key:
+        parser.error("Google Gemini API key must be specified.")
+
     # Configure logging based on command-line arguments
     log_level = logging.DEBUG if args.verbose else logging.INFO
     logging.basicConfig(
