@@ -136,7 +136,9 @@ def issue_summary_path(issues_dir: Path, source: IssueSource) -> Path:
     """Get the path to the summary of the issue (contents, citations, etc.)"""
     return issue_dir(issues_dir, source) / "resume.md"
 
+
 ModelName = Literal["gemini", "mistral"]
+
 
 def issue_summary_model_path(issues_dir: Path, source: IssueSource, model: ModelName) -> Path:
     """Get the path to the summary of the issue (contents, citations, etc.) produced by a specific model."""
@@ -230,11 +232,11 @@ def extract_issue_data_gemini(pdf_path: Path, google_api_key: str) -> IssueData:
 def extract_issue_text_mistral(pdf_path: Path, mistral_api_key: str) -> str:
     client = Mistral(api_key=mistral_api_key)
 
-    logging.info(f"Uploading PDF for analysis {pdf_path}...")
+    remote_file_name = pdf_path.parent.name + "/" + pdf_path.name
+    logging.info(f"Uploading PDF for analysis {pdf_path} as {remote_file_name}...")
     uploaded_pdf = client.files.upload(
         file={
-            "file_name": pdf_path.parent.name + "/" + pdf_path.name,
-            #"content": pdf_path.read_bytes(),
+            "file_name": remote_file_name,
             "content": open(pdf_path, "rb").read(),
         },
         purpose="ocr"
@@ -249,7 +251,7 @@ def extract_issue_text_mistral(pdf_path: Path, mistral_api_key: str) -> str:
             "type": "document_url",
             "document_url": signed_url.url,
         },
-        include_image_base64 = False,
+        include_image_base64=False,
     )
     logging.debug(f"OCR response. Found {len(ocr_response.pages)} pages.")
 
@@ -267,7 +269,7 @@ def extract_issue_data(issues_dir: Path, source: IssueSource, google_api_key: st
     if not pdf_path.exists():
         logging.warning(f"Issue {source['issue']} not downloaded. Skipping.")
     else:
-        model: ModelName= "gemini"
+        model: ModelName = "gemini"
         resume_output_path = issue_summary_model_path(issues_dir, source, model)
         if resume_output_path.exists() and not force:
             logging.debug(f"Resume exists for issue {source['issue']} for model {model}. Skipping.")
