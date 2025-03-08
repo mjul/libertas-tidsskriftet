@@ -1,5 +1,6 @@
 import argparse
 import io
+import json
 import logging
 import os
 from pathlib import Path
@@ -7,6 +8,7 @@ from typing import TypedDict, List, Literal
 
 import requests
 from google import genai
+from mistralai import Mistral
 
 
 class IssueSource(TypedDict):
@@ -133,10 +135,16 @@ def issue_summary_path(issues_dir: Path, source: IssueSource) -> Path:
     """Get the path to the summary of the issue (contents, citations, etc.)"""
     return issue_dir(issues_dir, source) / "resume.md"
 
+ModelName = Literal["gemini", "mistral"]
 
-def issue_summary_model_path(issues_dir: Path, source: IssueSource, model: Literal["gemini", "mistral"]) -> Path:
+def issue_summary_model_path(issues_dir: Path, source: IssueSource, model: ModelName) -> Path:
     """Get the path to the summary of the issue (contents, citations, etc.) produced by a specific model."""
     return issue_dir(issues_dir, source) / f"resume-{model}.md"
+
+
+def issue_ocr_model_path(issues_dir: Path, source: IssueSource, model: ModelName) -> Path:
+    """Get the path to the summary of the issue (contents, citations, etc.) produced by a specific model."""
+    return issue_dir(issues_dir, source) / f"ocr-{model}.md"
 
 
 def download_file(url: str, dest_path: Path):
@@ -218,23 +226,69 @@ def extract_issue_data_gemini(pdf_path: Path, google_api_key: str) -> IssueData:
     return {"indhold": indhold_response.text, "citerede": citerede_response.text}
 
 
-def extract_issue_data(issues_dir: Path, source: IssueSource, google_api_key: str, force: bool):
+def extract_issue_text_mistral(pdf_path: Path, mistral_api_key: str) -> str:
+    client = Mistral(api_key=mistral_api_key)
+
+    logging.info(f"Uploading PDF for analysis {pdf_path}...")
+    uploaded_pdf = client.files.upload(
+        file={
+            "file_name": pdf_path.parent.name + "/" + pdf_path.name,
+            #"content": pdf_path.read_bytes(),
+            "content": open(pdf_path, "rb").read(),
+        },
+        purpose="ocr"
+    )
+    logging.info(f"Signing URL...")
+    signed_url = client.files.get_signed_url(file_id=uploaded_pdf.id, expiry=1)
+
+    logging.info(f"Extracting contents with Mistral OCR...")
+    ocr_response = client.ocr.process(
+        model="mistral-ocr-latest",
+        document={
+            "type": "document_url",
+            "document_url": signed_url.url,
+        },
+        include_image_base64 = False,
+    )
+    logging.debug(f"OCR response. Found {len(ocr_response.pages)} pages.")
+
+    response_dict = json.loads(ocr_response.model_dump_json())
+    markdown_contents = [
+        page.get("markdown", "") for page in response_dict.get("pages", [])
+    ]
+    markdown_text = "\n\n".join(markdown_contents)
+
+    return markdown_text
+
+
+def extract_issue_data(issues_dir: Path, source: IssueSource, google_api_key: str, mistral_api_key: str, force: bool):
     pdf_path = issue_pdf_path(issues_dir, source)
     if not pdf_path.exists():
         logging.warn(f"Issue {source['issue']} not downloaded. Skipping.")
     else:
-        model = "gemini"
-        output_path = issue_summary_model_path(issues_dir, source, model)
-        if output_path.exists() and not force:
+        model: ModelName= "gemini"
+        resume_output_path = issue_summary_model_path(issues_dir, source, model)
+        if resume_output_path.exists() and not force:
             logging.debug(f"Resume exists for issue {source['issue']} for model {model}. Skipping.")
         else:
             gemini_data = extract_issue_data_gemini(pdf_path, google_api_key)
-            logging.info(f"Saving resume from {model} to {output_path}...")
-            with open(output_path, "w", encoding="utf-8") as f:
+            logging.info(f"Saving resume from {model} to {resume_output_path}...")
+            with open(resume_output_path, "w", encoding="utf-8") as f:
                 f.write(f"# {source['issue']}\n\n")
                 f.write(f"PDF udgave: <{source['uri']}>\n\n")
                 f.write(f"## Indhold\n\n{gemini_data["indhold"]}\n\n")
                 f.write(f"## Citerede forfattere\n\n{gemini_data["citerede"]}\n\n")
+        model: ModelName = "mistral"
+        ocr_output_path = issue_ocr_model_path(issues_dir, source, model)
+        if ocr_output_path.exists() and not force:
+            logging.debug(f"OCR results exists for issue {source['issue']} for model {model}. Skipping.")
+        else:
+            ocr_markdown = extract_issue_text_mistral(pdf_path, mistral_api_key)
+            logging.info(f"Saving OCR results from {model} to {ocr_output_path}...")
+            with open(ocr_output_path, "w", encoding="utf-8") as f:
+                f.write(f"# {source['issue']}\n\n")
+                f.write(f"PDF udgave: <{source['uri']}>\n\n")
+                f.write(f"{ocr_markdown}\n\n")
 
 
 def main():
@@ -253,6 +307,13 @@ def main():
               "If not specified, the key is read from the GOOGLE_API_KEY environment variable.")
     )
     parser.add_argument(
+        "--mistral-api-key",
+        type=str,
+        default=os.environ.get("MISTRAL_API_KEY"),
+        help=("Mistral API key to use. "
+              "If not specified, the key is read from the MISTRAL_API_KEY environment variable.")
+    )
+    parser.add_argument(
         "-f", "--force",
         action="store_true",
         help="Force re-download of files even if they exist"
@@ -267,6 +328,9 @@ def main():
 
     if not args.google_api_key:
         parser.error("Google Gemini API key must be specified.")
+
+    if not args.mistral_api_key:
+        parser.error("Mistral API key must be specified.")
 
     # Configure logging based on command-line arguments
     log_level = logging.DEBUG if args.verbose else logging.INFO
@@ -284,7 +348,10 @@ def main():
     download_pdfs(issues_dir, sources_to_process, args.force)
 
     for source in sources_to_process:
-        extract_issue_data(issues_dir, source, args.google_api_key, args.force)
+        logging.info(f"Processing issue {source['issue']}...")
+        extract_issue_data(issues_dir, source, args.google_api_key, args.mistral_api_key, args.force)
+
+    logging.info(f"Done.")
 
 
 if __name__ == "__main__":
