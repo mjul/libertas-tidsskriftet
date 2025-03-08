@@ -230,7 +230,7 @@ def extract_issue_data_gemini(pdf_path: Path, google_api_key: str) -> IssueData:
 
 
 def extract_issue_text_mistral(pdf_path: Path, mistral_api_key: str) -> str:
-    client = Mistral(api_key=mistral_api_key)
+    client = Mistral(api_key=mistral_api_key, timeout_ms=30_000)
 
     remote_file_name = pdf_path.parent.name + "/" + pdf_path.name
     logging.info(f"Uploading PDF for analysis {pdf_path} as {remote_file_name}...")
