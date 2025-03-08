@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 from typing import TypedDict, List, Literal
 
+import mistralai.models
 import requests
 from google import genai
 from mistralai import Mistral
@@ -283,12 +284,15 @@ def extract_issue_data(issues_dir: Path, source: IssueSource, google_api_key: st
         if ocr_output_path.exists() and not force:
             logging.debug(f"OCR results exists for issue {source['issue']} for model {model}. Skipping.")
         else:
-            ocr_markdown = extract_issue_text_mistral(pdf_path, mistral_api_key)
-            logging.info(f"Saving OCR results from {model} to {ocr_output_path}...")
-            with open(ocr_output_path, "w", encoding="utf-8") as f:
-                f.write(f"# {source['issue']}\n\n")
-                f.write(f"PDF udgave: <{source['uri']}>\n\n")
-                f.write(f"{ocr_markdown}\n\n")
+            try:
+                ocr_markdown = extract_issue_text_mistral(pdf_path, mistral_api_key)
+                logging.info(f"Saving OCR results from {model} to {ocr_output_path}...")
+                with open(ocr_output_path, "w", encoding="utf-8") as f:
+                    f.write(f"# {source['issue']}\n\n")
+                    f.write(f"PDF udgave: <{source['uri']}>\n\n")
+                    f.write(f"{ocr_markdown}\n\n")
+            except mistralai.models.SDKError:
+                logging.warning(f"Failed to extract OCR results from {model} for issue {source['issue']}. Skipping.")
 
 
 def main():
