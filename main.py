@@ -264,7 +264,7 @@ def extract_issue_text_mistral(pdf_path: Path, mistral_api_key: str) -> str:
 def extract_issue_data(issues_dir: Path, source: IssueSource, google_api_key: str, mistral_api_key: str, force: bool):
     pdf_path = issue_pdf_path(issues_dir, source)
     if not pdf_path.exists():
-        logging.warn(f"Issue {source['issue']} not downloaded. Skipping.")
+        logging.warning(f"Issue {source['issue']} not downloaded. Skipping.")
     else:
         model: ModelName= "gemini"
         resume_output_path = issue_summary_model_path(issues_dir, source, model)
