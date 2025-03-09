@@ -3,6 +3,7 @@ import io
 import json
 import logging
 import os
+from io import BufferedWriter
 from pathlib import Path
 from typing import TypedDict, List, Literal
 
@@ -145,9 +146,14 @@ def issue_summary_model_path(issues_dir: Path, source: IssueSource, model: Model
     return issue_dir(issues_dir, source) / f"resume-{model}.md"
 
 
-def issue_ocr_model_path(issues_dir: Path, source: IssueSource, model: ModelName) -> Path:
-    """Get the path to the summary of the issue (contents, citations, etc.) produced by a specific model."""
+def issue_ocr_model_markdown_path(issues_dir: Path, source: IssueSource, model: ModelName) -> Path:
+    """Get the path to the issue contents in Markdown format produced by a specific model."""
     return issue_dir(issues_dir, source) / f"ocr-{model}.md"
+
+
+def issue_ocr_model_json_path(issues_dir: Path, source: IssueSource, model: ModelName) -> Path:
+    """Get the path to the issue contents in JSON format produced by a specific model."""
+    return issue_dir(issues_dir, source) / f"ocr-{model}.json"
 
 
 def download_file(url: str, dest_path: Path):
@@ -229,7 +235,7 @@ def extract_issue_data_gemini(pdf_path: Path, google_api_key: str) -> IssueData:
     return {"indhold": indhold_response.text, "citerede": citerede_response.text}
 
 
-def extract_issue_text_mistral(pdf_path: Path, mistral_api_key: str) -> str:
+def extract_issue_text_mistral(pdf_path: Path, mistral_api_key: str) -> (dict, str):
     client = Mistral(api_key=mistral_api_key, timeout_ms=30_000)
 
     remote_file_name = pdf_path.parent.name + "/" + pdf_path.name
@@ -261,7 +267,7 @@ def extract_issue_text_mistral(pdf_path: Path, mistral_api_key: str) -> str:
     ]
     markdown_text = "\n\n".join(markdown_contents)
 
-    return markdown_text
+    return (response_dict, markdown_text)
 
 
 def extract_issue_data(issues_dir: Path, source: IssueSource, google_api_key: str, mistral_api_key: str, force: bool):
@@ -282,21 +288,27 @@ def extract_issue_data(issues_dir: Path, source: IssueSource, google_api_key: st
                 f.write(f"## Indhold\n\n{gemini_data["indhold"]}\n\n")
                 f.write(f"## Citerede forfattere\n\n{gemini_data["citerede"]}\n\n")
         model: ModelName = "mistral"
-        ocr_output_path = issue_ocr_model_path(issues_dir, source, model)
-        if ocr_output_path.exists() and not force:
+        ocr_json_output_path = issue_ocr_model_json_path(issues_dir, source, model)
+        ocr_markdown_output_path = issue_ocr_model_markdown_path(issues_dir, source, model)
+        if ocr_json_output_path.exists() and ocr_markdown_output_path.exists() and not force:
             logging.debug(f"OCR results exists for issue {source['issue']} for model {model}. Skipping.")
         else:
             try:
-                ocr_markdown = extract_issue_text_mistral(pdf_path, mistral_api_key)
-                logging.info(f"Saving OCR results from {model} to {ocr_output_path}...")
-                with open(ocr_output_path, "w", encoding="utf-8") as f:
+                (ocr_json, ocr_markdown) = extract_issue_text_mistral(pdf_path, mistral_api_key)
+                logging.info(f"Saving OCR results from {model} to {ocr_json_output_path}...")
+                with open(ocr_json_output_path, "w", encoding="utf-8") as f:
+                    json.dump(ocr_json, f, ensure_ascii=False, indent=2)
+                logging.info(f"Saving OCR results from {model} to {ocr_markdown_output_path}...")
+                with open(ocr_markdown_output_path, "w", encoding="utf-8") as f:
                     f.write(f"# {source['issue']}\n\n")
                     f.write(f"PDF udgave: <{source['uri']}>\n\n")
                     f.write(f"{ocr_markdown}\n\n")
             except mistralai.models.SDKError:
-                logging.warning(f"Failed to extract OCR results from {model} for issue {source['issue']}. Skipping.")
+                logging.warning(
+                    f"Failed to extract text with {model} for issue {source['issue']} due to a Mistral OCR error. Skipping.")
             except Exception as e:
-                logging.warning(f"Failed to extract OCR results from {model} for issue {source['issue']}. Skipping.")
+                logging.warning(
+                    f"Failed to extract text with {model} for issue {source['issue']}, most likely due to a Mistral OCR time-out. Skipping.")
 
 
 def main():
