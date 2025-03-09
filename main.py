@@ -295,6 +295,8 @@ def extract_issue_data(issues_dir: Path, source: IssueSource, google_api_key: st
                     f.write(f"{ocr_markdown}\n\n")
             except mistralai.models.SDKError:
                 logging.warning(f"Failed to extract OCR results from {model} for issue {source['issue']}. Skipping.")
+            except Exception as e:
+                logging.warning(f"Failed to extract OCR results from {model} for issue {source['issue']}. Skipping.")
 
 
 def main():
